@@ -2,9 +2,16 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
+local PhysicsService = game:GetService("PhysicsService")
 
---//
+--// Main Module \\--
 
+local CubeClass = {}
+local CubePrototype = {}
+
+local CubeList = {}
+
+local ClassMeta = {__index = CubePrototype}
 local RainbowMachine = {}
 
 local classMeta = {
@@ -16,6 +23,107 @@ local ClientTween = require(ReplicatedStorage.Library.ClientTween)
 local DoorHandler = require(ReplicatedStorage.Library.DoorHandler)
 local SoundPlayer = require(ReplicatedStorage.Library.SoundPlayer)
 
+--// Auxiliary Functions \\--
+
+local function setUpCollisionGroup(cubeType: string)
+
+	--PhysicsService:RegisterCollisionGroup(cubeType .. "RestingCube")
+	PhysicsService:RegisterCollisionGroup(cubeType .. "Cube")
+	PhysicsService:RegisterCollisionGroup(cubeType .. "Button")
+	PhysicsService:RegisterCollisionGroup(cubeType .. "NonCollide")
+
+	for _, collisionGroup in PhysicsService:GetRegisteredCollisionGroups() do
+		if collisionGroup.name:match("NonCollide") or collisionGroup.name:match("Cube") then continue end
+		--PhysicsService:CollisionGroupSetCollidable(collisionGroup.name, cubeType .. "RestingCube", false)
+		PhysicsService:CollisionGroupSetCollidable(collisionGroup.name, cubeType .. "Button", false)
+		PhysicsService:CollisionGroupSetCollidable(collisionGroup.name, cubeType .. "Cube", false)
+	end
+
+	--PhysicsService:CollisionGroupSetCollidable("Default", cubeType .. "RestingCube", true)
+	PhysicsService:CollisionGroupSetCollidable("Default", cubeType .. "Button", true)
+	PhysicsService:CollisionGroupSetCollidable("Default", cubeType .. "Cube", true)
+	
+	--PhysicsService:CollisionGroupSetCollidable("NoCube", cubeType .. "RestingCube", true)
+	PhysicsService:CollisionGroupSetCollidable("NoCube", cubeType .. "Cube", true)
+	
+	--PhysicsService:CollisionGroupSetCollidable(cubeType .. "RestingCube", cubeType .. "Button", true)
+	PhysicsService:CollisionGroupSetCollidable(cubeType .. "Cube", cubeType .. "Button", true)
+	--PhysicsService:CollisionGroupSetCollidable(cubeType .. "RestingCube", cubeType .. "RestingCube", true)
+	PhysicsService:CollisionGroupSetCollidable(cubeType .. "Cube", cubeType .. "Cube", true)
+	
+	PhysicsService:CollisionGroupSetCollidable(cubeType .. "NonCollide", cubeType .. "Button", false)
+	--PhysicsService:CollisionGroupSetCollidable(cubeType .. "NonCollide", cubeType .. "RestingCube", false)
+	PhysicsService:CollisionGroupSetCollidable(cubeType .. "NonCollide", cubeType .. "Cube", false)
+
+	--PhysicsService:CollisionGroupSetCollidable(cubeType .. "RestingCube", "Player", true)
+	PhysicsService:CollisionGroupSetCollidable(cubeType .. "Cube", "Player", true)
+	
+end
+
+--// Constructor \\--
+
+function CubeClass.new(part: BasePart, button: BasePart)	
+	local cubeType = part:GetAttribute("Type")
+	setUpCollisionGroup(cubeType)
+	
+	local cube = {		
+		Cube = part,
+		ProximityPrompt = assert(part:FindFirstChildWhichIsA("ProximityPrompt", true), `{part:GetFullName()} has no ProximityPrompt`),
+		Type = cubeType,		
+		Button = button,
+		Connection = nil,		
+	}	
+	button.CollisionGroup = cubeType .. "Button"
+	part.CollisionGroup = cubeType .. "Cube"
+	
+	local nonCollide = button:Clone()
+	nonCollide.CollisionGroup = cubeType .."NonCollide"
+	nonCollide.Transparency = 1
+	nonCollide:ClearAllChildren()
+	nonCollide.Anchored = true
+	nonCollide.Parent = button.Parent
+	setmetatable(cube, ClassMeta)	
+	table.insert(CubeList, cube)	
+	return cube	
+end
+
+function CubeClass.GetCubeFromPart(part: BasePart)	
+	for _, cube in CubeList do
+		if cube.Cube == part then return cube end
+	end	
+	return nil	
+end
+
+--// Methods \\--
+
+function CubePrototype:SetOwnership(player: Player)
+	
+	self.ProximityPrompt.Enabled = false
+	self.Cube:SetNetworkOwner(player)
+	self.Button:SetNetworkOwner(player)
+	
+	self.Cube:SetAttribute("Owner", player.UserId)
+	PhysicsService:CollisionGroupSetCollidable(self.Type .. "Cube", "Player", false)
+	
+	local humanoid = player.Character and player.Character:FindFirstChildWhichIsA("Humanoid")	
+	self.Connection = humanoid and humanoid.Died:Once(function()
+		local connection = self.Connection
+		self.Connection = connection and connection:Disconnect()
+		if self.Cube:GetAttribute("Owner") == player.UserId then
+			self:RemoveOwnership()
+		end
+	end)
+	
+end
+
+function CubePrototype:RemoveOwnership()
+	
+	self.Cube:SetAttribute("Owner", nil)
+	self.ProximityPrompt.Enabled = true
+	
+	PhysicsService:CollisionGroupSetCollidable(self.Type .. "Cube", "Player", true)
+	
+end
 --// Instances \\--
 
 local Events = ReplicatedStorage.Events
@@ -29,10 +137,7 @@ local JumpscareEvent = Events.Jumpscare
 --// Objectives \\--
 local Objecives = ReplicatedStorage.Objectives
 --//
-
-
 function RainbowMachine.new(folder: typeof(workspace["Rainbow Machine"]))
-
 	local machine = folder:FindFirstChild("Machine")
 	assert(machine, `No Machine inside {folder:GetFullName()}`)
 
@@ -69,7 +174,6 @@ function RainbowMachine.new(folder: typeof(workspace["Rainbow Machine"]))
 	-- constructing
 
 	local rainbowMachine = setmetatable({
-
 		ItemPrompt = itemPrompt,
 		Folder = folder,
 		Chicken = chicken,
@@ -84,12 +188,9 @@ function RainbowMachine.new(folder: typeof(workspace["Rainbow Machine"]))
 			EyeColor = chicken.Eyes.Color
 
 		},
-
 		Items = folder.Items:Clone(),
-
 		Eggs = eggs,
 		Colors = colors,
-
 		TicketEntered = false,
 		BatteryEntered = false,
 		Activated = false,
@@ -98,12 +199,8 @@ function RainbowMachine.new(folder: typeof(workspace["Rainbow Machine"]))
 
 		InputCount = 0,
 		MistakeCount = 0,
-
 	}, classMeta)
-
-
 	-- connections
-
 	itemPrompt.Triggered:Connect(function(player)
 		rainbowMachine:EnterItem(player)
 	end)
@@ -115,13 +212,9 @@ function RainbowMachine.new(folder: typeof(workspace["Rainbow Machine"]))
 		end)
 
 	end
-
 	-- return
-
 	return RainbowMachine
-
 end
-
 
 function RainbowMachine:Reset()
 
@@ -142,17 +235,12 @@ function RainbowMachine:Reset()
 	for _, v in self.Machine.Battery:GetChildren() do
 		v.Transparency = 1
 	end
-
 end
 
-
 function RainbowMachine:Mistake(player)
-
 	local mistakeCount = self.MistakeCount
 	print(`Mistake #{mistakeCount}`)
-
 	if mistakeCount == 1 then
-
 		local tween = ClientTween.Create(self.Chicken.Eyes, TweenInfo.new(0.3), {Color = Color3.new(1)})
 		tween:Play()
 
@@ -164,7 +252,6 @@ function RainbowMachine:Mistake(player)
 		tween:Play()
 
 	elseif mistakeCount == 3 then
-
 		JumpscareEvent:FireClient(player, self.Folder.Jumpscare)
 
 		task.wait(3)
@@ -177,29 +264,19 @@ function RainbowMachine:Mistake(player)
 
 		self:Reset()
 		return true
-
 	end
-
 end
 
 function RainbowMachine:Done()
-
 	RainbowMachine.Ended = true
-	Objecives["Open Rainbow Grey Door"].Value = true
-	
-	DoorHandler.OpenDoor(self.Door)
-	
+	Objecives["Open Rainbow Grey Door"].Value = true	
+	DoorHandler.OpenDoor(self.Door)	
 end
 
-
 function RainbowMachine:ShuffleEggs()
-
 	print("shuffling")
-
-	local eggs = self.Eggs
-	
+	local eggs = self.Eggs	
 	Random.new():Shuffle(eggs)
-
 	local array = table.create(#eggs)
 	for i = 1, #eggs do array[i] = i end
 
@@ -233,7 +310,6 @@ function RainbowMachine:ShuffleEggs()
 			egg.Color = self.Colors[i]
 			egg.Material = Enum.Material.Neon
 		end
-
 		--self.Sounds.Ping2:Play()
 		SoundPlayer.Play3D(SoundService.SFX.EggBeep, self.Machine:GetPivot().Position)
 		task.wait(0.5)
@@ -248,9 +324,7 @@ function RainbowMachine:ShuffleEggs()
 
 end
 
-
 function RainbowMachine:Input(player: Player, egg: string)
-
 	if self.Ended then return end
 	if not self.Activated then NotificationEvent:FireClient(player, "The machine is off") return end
 
@@ -261,21 +335,17 @@ function RainbowMachine:Input(player: Player, egg: string)
 	--self.InputCount += 1
 	SoundPlayer.Play(SoundService.SFX.EggBeep)
 	--self.Sounds.Ping:Play()
-
 	local currentEgg = self.Eggs[nextInput]
 	local isCorrect = currentEgg.name == egg
 	
 	if isCorrect then
 		self.InputCount = nextInput
 	end
-
 	local color = isCorrect and Color3.fromRGB(39, 165, 0) or Color3.fromRGB(165, 0, 0)
-
 	for _, egg in self.Eggs do
 		egg.Color = color
 		egg.Material = Enum.Material.Neon
 	end
-
 	task.wait(1)
 
 	for _, egg in self.Eggs do
@@ -300,16 +370,11 @@ function RainbowMachine:Input(player: Player, egg: string)
 		self:ShuffleEggs()
 		warn("done shuffling")
 	end
-
 	self.Debounce = false
-
 end
 
-
 function RainbowMachine:Activate()
-
 	if self.Ended then return end
-
 	if not self.TicketEntered then
 		warn("Ticket not entered")
 		return
@@ -326,7 +391,6 @@ function RainbowMachine:Activate()
 	self.Debounce = false
 
 end
-
 
 function RainbowMachine:EnterItem(player: Player)
 
@@ -347,16 +411,12 @@ function RainbowMachine:EnterItem(player: Player)
 				tool = character:FindFirstChild(itemName)
 			end
 		end
-
 		if tool then
 			RemoveInventory:FireClient(player, tool.Name)
 			tool:Destroy() 
 		end
 
-		table.remove(inventory, index)
-		
-		
-		
+		table.remove(inventory, index)		
 		print("battery inserted")
 		Objecives["Power the Rainbow Machine"].Value = true
 
@@ -367,9 +427,7 @@ function RainbowMachine:EnterItem(player: Player)
 		end
 
 	elseif not self.TicketEntered then
-
-		local itemName = "Ticket"
-		
+		local itemName = "Ticket"	
 		local index = table.find(inventory, itemName)
 		if not index then NotificationEvent:FireClient(player, "Insert a ticket to start the machine") return end
 		local tool = player.Backpack:FindFirstChild(itemName) 
@@ -385,37 +443,25 @@ function RainbowMachine:EnterItem(player: Player)
 			RemoveInventory:FireClient(player, tool.Name)
 			tool:Destroy() 
 		end
-
 		table.remove(inventory, index)
 		print("ticket entered")
 		Objecives["Pay something to the Machine"].Value = true
 		self.TicketEntered = true
-
 		local ticketEntrance = self.Machine.TicketEntrance.CFrame
-
 		local ticket = self.Items.Ticket:Clone()
 		ticket.CFrame = ticketEntrance * CFrame.new(0.8, 0, 0) 
 		ticket.Parent = workspace
-
 		local tween = ClientTween.Create(ticket, TweenInfo.new(), {CFrame = ticketEntrance * CFrame.new(-0.8,0,0)})
-
 		task.delay(0.4, function()
-
 			SoundPlayer.Play(SoundService.SFX.TicketInsert)
-
 			tween:Play()
 			tween.Completed:Connect(function()
 				ticket:Destroy()
 				self:Activate()
 			end)
-
 		end)
-
 		self.ItemPrompt.Enabled = false
-
 	end
-
 end
-
 
 return RainbowMachine
